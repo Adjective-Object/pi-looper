@@ -5,7 +5,7 @@
 #include <alsa/asoundlib.h>
 #pragma GCC diagnostic ignored "-Wuninitialized"
 
-uint rate = 44100;
+uint rate = 170400;
 
 void setup_channel(snd_pcm_t **handle, snd_pcm_hw_params_t **hw_params){
     int err;
@@ -135,7 +135,7 @@ int main (int argc, char *argv[]) {
         ); 
 
     printf("!!");
-    
+
     snd_pcm_uframes_t frames;
     int dir ;
 
