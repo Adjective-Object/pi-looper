@@ -26,16 +26,16 @@
 #include <pulse/sample.h>
 #include <pulse/error.h>
 #define FRAMESIZE 1024
-#define NUMFRAMES 1000
+#define NUMFRAMES 400
 #define BUFLEN FRAMESIZE * NUMFRAMES
 
-#define SAMPLE_BPS 44100
+#define SAMPLE_HZ 44100
 
 int main(int argc, char*argv[]) {
     /* The Sample format to use */
     static const pa_sample_spec ss = {
         .format = PA_SAMPLE_S16LE,
-        .rate = SAMPLE_BPS,
+        .rate = SAMPLE_HZ,
         .channels = 2
     };
     pa_simple *outs = NULL;
@@ -81,7 +81,7 @@ int main(int argc, char*argv[]) {
     pa_usec_t outlatency = pa_simple_get_latency(outs, &error);
 
     int netlatency = (inlatency + outlatency)/1000;
-    printf("%d",netlatency*SAMPLE_BPS/((int)sizeof(int)));
+    printf("%d",netlatency*SAMPLE_HZ/((int)sizeof(int)));
     int netlatency_buf = 100; // netlatency*SAMPLE_BPS/((int)sizeof(int));
 
     printf("%d\n", NUMFRAMES);
@@ -92,14 +92,15 @@ int main(int argc, char*argv[]) {
     int *loop = malloc( sizeof(int) * BUFLEN );
     int *buf = malloc( sizeof(int) * FRAMESIZE );
 
-    //initialize loop as zfilled
+
+
+    //initialize loop recording
     int i;
     for(i=0; i<BUFLEN; i++){
         loop[i] = 0;
     }
 
     int count = 0;
-
     while(1) {
         /* Read some data ... */
         if (pa_simple_read(ins, buf, FRAMESIZE, &error) < 0) {
@@ -122,6 +123,9 @@ int main(int argc, char*argv[]) {
             goto finish;
         }
         count = (count + 1) % NUMFRAMES;
+        if(count == 0){
+            printf("."); fflush(stdout);
+        }   
     }
 
 finish:
