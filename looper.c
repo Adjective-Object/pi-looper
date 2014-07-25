@@ -18,18 +18,24 @@
 #endif
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pulse/simple.h>
+#include <pulse/sample.h>
 #include <pulse/error.h>
-#define BUFSIZE 1024
+#define FRAMESIZE 1024
+#define NUMFRAMES 1000
+#define BUFLEN FRAMESIZE * NUMFRAMES
+
+#define SAMPLE_BPS 44100
 
 int main(int argc, char*argv[]) {
     /* The Sample format to use */
     static const pa_sample_spec ss = {
         .format = PA_SAMPLE_S16LE,
-        .rate = 44100,
+        .rate = SAMPLE_BPS,
         .channels = 2
     };
     pa_simple *outs = NULL;
@@ -71,29 +77,52 @@ int main(int argc, char*argv[]) {
         goto finish;
     }
 
-    uint8_t buf[BUFSIZE];
-    for (;;) {
+    pa_usec_t inlatency = pa_simple_get_latency(ins, &error);
+    pa_usec_t outlatency = pa_simple_get_latency(outs, &error);
 
+    int netlatency = (inlatency + outlatency)/1000;
+    printf("%d",netlatency*SAMPLE_BPS/((int)sizeof(int)));
+    int netlatency_buf = 100; // netlatency*SAMPLE_BPS/((int)sizeof(int));
+
+    printf("%d\n", NUMFRAMES);
+    printf("%d\n", FRAMESIZE);
+    printf("%d\n", BUFLEN);
+
+    //1 byte sample size
+    int *loop = malloc( sizeof(int) * BUFLEN );
+    int *buf = malloc( sizeof(int) * FRAMESIZE );
+
+    //initialize loop as zfilled
+    int i;
+    for(i=0; i<BUFLEN; i++){
+        loop[i] = 0;
+    }
+
+    int count = 0;
+
+    while(1) {
         /* Read some data ... */
-        if (pa_simple_read(ins, buf, (size_t) BUFSIZE, &error) < 0) {
+        if (pa_simple_read(ins, buf, FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
             goto finish;
         }
+
+        //copy into loop, accounting for latency
+        for(i=0; i<FRAMESIZE; i++){
+            int addr = count*FRAMESIZE + i - netlatency_buf;
+            if(addr<0) {
+                addr = BUFLEN + addr;
+            }
+            loop[addr] = loop[addr] + buf[i];
+        }
+
         /* ... and play it */
-        if (pa_simple_write(outs, buf, (size_t) BUFSIZE, &error) < 0) {
+        if (pa_simple_write(outs, loop + (count * FRAMESIZE), (size_t) FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
             goto finish;
         }
+        count = (count + 1) % NUMFRAMES;
     }
-
-    /* Make sure that every single sample was played */
-    if (pa_simple_drain(outs, &error) < 0) {
-        fprintf(stderr, __FILE__": pa_simple_drain() failed: %s\n", pa_strerror(error));
-        goto finish;
-    }
-    
-    exitcode = 0;
-
 
 finish:
     if (ins)
