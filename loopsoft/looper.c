@@ -26,6 +26,7 @@
 #include <pulse/sample.h>
 #include <pulse/error.h>
 #include <termios.h>
+#include <SDL/SDL.h>
 #include <time.h>
 #define FRAMESIZE 1024
 #define MAXNUMFRAMES 3000
@@ -57,6 +58,7 @@ int getkey() {
 }
 
 int main(int argc, char*argv[]) {
+    int i;
     /* The Sample format to use */
     static const pa_sample_spec ss = {
         .format = PA_SAMPLE_S16LE,
@@ -85,7 +87,7 @@ int main(int argc, char*argv[]) {
         goto finish;
     }
 
-        /* Create a new capture stream */
+    /* Create a new capture stream */
     if ( !( ins = pa_simple_new(
             NULL, // server
             "pi-looper", // name
@@ -109,6 +111,24 @@ int main(int argc, char*argv[]) {
     int *loop = malloc( sizeof(int) * BUFLEN );
     int *buf = malloc( sizeof(int) * FRAMESIZE );
 
+    /* setup controller support */
+    if (SDL_Init( SDL_INIT_JOYSTICK ) < 0){
+        fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
+        exit(1);
+    }
+    printf("%i joysticks were found.\n\n", SDL_NumJoysticks() );
+    if(SDL_NumJoysticks()>0) {
+        printf("The names of the joysticks are:\n");
+    }
+        
+    for( i=0; i < SDL_NumJoysticks(); i++ ) 
+    {
+        printf("    %s\n", SDL_JoystickName(i));
+    }
+
+
+
+
     //initial recording
     int looplen;
     for(looplen = 0; looplen<MAXNUMFRAMES; looplen++){
@@ -123,8 +143,8 @@ int main(int argc, char*argv[]) {
 
     printf("looplen %d\n", looplen);
 
-
-    int recording = 1;
+    //TODO bitmasking
+    int recording = 0b0000000000000001;
 
     pa_usec_t outlatency;
     pa_usec_t inlatency;
@@ -146,7 +166,6 @@ int main(int argc, char*argv[]) {
 
         if(recording) {
             //copy into loop, accounting for latency
-            int i;
             for(i=0; i<FRAMESIZE; i++){
                 int addr = count*FRAMESIZE - netlatency_buf + i;
                 if(addr<0) {
@@ -173,7 +192,7 @@ int main(int argc, char*argv[]) {
         count = (count + 1) % looplen;
         if(count == 0){
             printf("."); fflush(stdout);
-        }   
+        }
     }
 
 finish:
