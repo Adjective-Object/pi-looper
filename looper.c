@@ -25,11 +25,36 @@
 #include <pulse/simple.h>
 #include <pulse/sample.h>
 #include <pulse/error.h>
+#include <termios.h>
+#include <time.h>
 #define FRAMESIZE 1024
-#define NUMFRAMES 400
-#define BUFLEN FRAMESIZE * NUMFRAMES
+#define MAXNUMFRAMES 3000
+#define BUFLEN FRAMESIZE * MAXNUMFRAMES
 
 #define SAMPLE_HZ 44100
+
+int getkey() {
+    int character;
+    struct termios orig_term_attr;
+    struct termios new_term_attr;
+
+    /* set the terminal to raw mode */
+    tcgetattr(fileno(stdin), &orig_term_attr);
+    memcpy(&new_term_attr, &orig_term_attr, sizeof(struct termios));
+    new_term_attr.c_lflag &= ~(ECHO|ICANON);
+    new_term_attr.c_cc[VTIME] = 0;
+    new_term_attr.c_cc[VMIN] = 0;
+    tcsetattr(fileno(stdin), TCSANOW, &new_term_attr);
+
+    /* read a character from the stdin stream without blocking */
+    /*   returns EOF (-1) if no character is available */
+    character = fgetc(stdin);
+
+    /* restore the original terminal attributes */
+    tcsetattr(fileno(stdin), TCSANOW, &orig_term_attr);
+
+    return character;
+}
 
 int main(int argc, char*argv[]) {
     /* The Sample format to use */
@@ -77,31 +102,42 @@ int main(int argc, char*argv[]) {
         goto finish;
     }
 
-    pa_usec_t inlatency = pa_simple_get_latency(ins, &error);
-    pa_usec_t outlatency = pa_simple_get_latency(outs, &error);
-
-    int netlatency = (inlatency + outlatency)/1000;
-    printf("%d",netlatency*SAMPLE_HZ/((int)sizeof(int)));
-    int netlatency_buf = 100; // netlatency*SAMPLE_BPS/((int)sizeof(int));
-
-    printf("%d\n", NUMFRAMES);
+    printf("%d\n", MAXNUMFRAMES);
     printf("%d\n", FRAMESIZE);
     printf("%d\n", BUFLEN);
 
-    //1 byte sample size
     int *loop = malloc( sizeof(int) * BUFLEN );
     int *buf = malloc( sizeof(int) * FRAMESIZE );
 
+    //
 
-
-    //initialize loop recording
-    int i;
-    for(i=0; i<BUFLEN; i++){
-        loop[i] = 0;
+    //initial recording
+    int looplen;
+    for(looplen = 0; looplen<MAXNUMFRAMES; looplen++){
+        if (pa_simple_read(ins, loop + (looplen * FRAMESIZE), FRAMESIZE, &error) < 0) {
+            fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
+            goto finish;
+        }
+        if(getkey() != -1){
+            break;
+        }
     }
 
+    printf("looplen %d\n", looplen);
+
+
+    pa_usec_t outlatency;
+    pa_usec_t inlatency;
     int count = 0;
     while(1) {
+        if( (inlatency = pa_simple_get_latency(ins, &error)) < 0 ){
+            fprintf(stderr, __FILE__": pa_simple_get_latency() failed: %s\n", pa_strerror(error));
+        }
+        if( (outlatency = pa_simple_get_latency(ins, &error)) < 0 ){
+            fprintf(stderr, __FILE__": pa_simple_get_latency() failed: %s\n", pa_strerror(error));
+        }
+        int netlatency_buf = (inlatency + outlatency) * SAMPLE_HZ / 1000000 / BUFLEN + 10; // netlatency*SAMPLE_BPS/((int)sizeof(int));
+        
         /* Read some data ... */
         if (pa_simple_read(ins, buf, FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
@@ -109,10 +145,11 @@ int main(int argc, char*argv[]) {
         }
 
         //copy into loop, accounting for latency
+        int i;
         for(i=0; i<FRAMESIZE; i++){
-            int addr = count*FRAMESIZE + i - netlatency_buf;
+            int addr = count*FRAMESIZE - netlatency_buf + i;
             if(addr<0) {
-                addr = BUFLEN + addr;
+                addr = looplen + (addr % looplen);
             }
             loop[addr] = loop[addr] + buf[i];
         }
@@ -122,7 +159,7 @@ int main(int argc, char*argv[]) {
             fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
             goto finish;
         }
-        count = (count + 1) % NUMFRAMES;
+        count = (count + 1) % looplen;
         if(count == 0){
             printf("."); fflush(stdout);
         }   
