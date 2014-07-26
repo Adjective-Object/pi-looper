@@ -109,8 +109,6 @@ int main(int argc, char*argv[]) {
     int *loop = malloc( sizeof(int) * BUFLEN );
     int *buf = malloc( sizeof(int) * FRAMESIZE );
 
-    //
-
     //initial recording
     int looplen;
     for(looplen = 0; looplen<MAXNUMFRAMES; looplen++){
@@ -126,6 +124,8 @@ int main(int argc, char*argv[]) {
     printf("looplen %d\n", looplen);
 
 
+    int recording = 1;
+
     pa_usec_t outlatency;
     pa_usec_t inlatency;
     int count = 0;
@@ -137,21 +137,32 @@ int main(int argc, char*argv[]) {
             fprintf(stderr, __FILE__": pa_simple_get_latency() failed: %s\n", pa_strerror(error));
         }
         int netlatency_buf = (inlatency + outlatency) * SAMPLE_HZ / 1000000 / BUFLEN + 10; // netlatency*SAMPLE_BPS/((int)sizeof(int));
-        
+
         /* Read some data ... */
         if (pa_simple_read(ins, buf, FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
             goto finish;
         }
 
-        //copy into loop, accounting for latency
-        int i;
-        for(i=0; i<FRAMESIZE; i++){
-            int addr = count*FRAMESIZE - netlatency_buf + i;
-            if(addr<0) {
-                addr = looplen + (addr % looplen);
+        if(recording) {
+            //copy into loop, accounting for latency
+            int i;
+            for(i=0; i<FRAMESIZE; i++){
+                int addr = count*FRAMESIZE - netlatency_buf + i;
+                if(addr<0) {
+                    addr = looplen + (addr % looplen);
+                }
+                loop[addr] = loop[addr] + buf[i];
             }
-            loop[addr] = loop[addr] + buf[i];
+        }
+
+        if(getkey() != -1){
+            recording = !recording;
+            if(recording){
+                printf("\nrecording\n");
+            } else{
+                printf("\nrecording stopped\n");
+            }
         }
 
         /* ... and play it */
