@@ -28,7 +28,7 @@
 #include <termios.h>
 #include <SDL/SDL.h>
 #include <time.h>
-#define FRAMESIZE 32
+#define FRAMESIZE 128
 #define MAXNUMFRAMES 30000
 #define BUFLEN FRAMESIZE * MAXNUMFRAMES
 
@@ -60,24 +60,15 @@ int getkey() {
     return character;
 }
 
-int oldrecording = 0;
 int isRecording(){
     if( joy == NULL ){
         if (getkey() != -1){
             keyrecording = !keyrecording;
         }
-        if(keyrecording != oldrecording){
-            oldrecording = keyrecording;
-            printf("\nrecording: %d\n", oldrecording);
-        }
-        return oldrecording;
+        return keyrecording;
     } else {
         SDL_JoystickUpdate();
-        if (SDL_JoystickGetButton(joy, 0) != oldrecording){
-            oldrecording = SDL_JoystickGetButton(joy,0);
-            printf("\nrecording: %d\n", oldrecording);
-        }
-        return oldrecording;
+        return SDL_JoystickGetButton(joy, 0);
     }
 }
 
@@ -136,6 +127,10 @@ int main(int argc, char*argv[]) {
     printf("%d\n", FRAMESIZE);
     printf("%d\n", BUFLEN);
 
+    int *loop = malloc( sizeof(int) * BUFLEN );
+    int *loopbuf = malloc( sizeof(int) * BUFLEN );
+    int *buf = malloc( sizeof(int) * FRAMESIZE );
+
 
     /* setup controller support */
     if (SDL_Init( SDL_INIT_JOYSTICK ) < 0){
@@ -151,14 +146,17 @@ int main(int argc, char*argv[]) {
         printf("no joysticks found, please use keyboard controls\n");
     }
 
-    /* setup buffers */
-    int *loop = malloc( sizeof(int) * BUFLEN );
-    int *inbuf = malloc( sizeof(int) * FRAMESIZE );
-
     printf("waiting for input\n");
-    while(!isRecording()) {
-        //clear the contents of the buffer
-        pa_simple_read(ins, inbuf, FRAMESIZE, &error);
+
+    while(!isRecording()){
+        /*
+        for(i=0; i<SDL_JoystickNumButtons(joy); i++){
+            printf("%d", SDL_JoystickGetButton(joy, i));
+        }
+        printf("\n");
+        sleep(1);
+        */
+        pa_simple_read(ins, buf, FRAMESIZE, &error);
     }
 
     printf("starting initial recording\n");
@@ -166,56 +164,79 @@ int main(int argc, char*argv[]) {
     //initial recording
     int looplen;
     for(looplen = 0; looplen<MAXNUMFRAMES; looplen++){
-        if(pa_simple_read(ins, loop+looplen*FRAMESIZE, FRAMESIZE, &error) < -1){
+        if (pa_simple_read(ins, loop + (looplen * FRAMESIZE), FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
             goto finish;
         }
-        if(!isRecording()) {
+        if( !isRecording() ){
             break;
         }
     }
-
     int LOOPLENN = looplen * FRAMESIZE;
-    printf("looplen %d\n", looplen);
-    
-    int netlatency = pa_simple_get_latency(ins,&error) + pa_simple_get_latency(ins,&error);
-    int addtl_latency_usec = 18000;
 
-    //bytes to shift incoming audio
-    int latency = (netlatency+addtl_latency_usec) / 1000000 * SAMPLE_HZ / FRAMESIZE * FRAMESIZE; // make divisible by 32
+    printf("looplen %d\n", looplen);
+
+    int oldrecording = isRecording();
+
+    pa_usec_t outlatency;
+    pa_usec_t inlatency;
+    if( (inlatency = pa_simple_get_latency(ins, &error)) < 0 ){
+        fprintf(stderr, __FILE__": pa_simple_get_latency() failed: %s\n", pa_strerror(error));
+    }
+    if( (outlatency = pa_simple_get_latency(ins, &error)) < 0 ){
+        fprintf(stderr, __FILE__": pa_simple_get_latency() failed: %s\n", pa_strerror(error));
+    }
+    int netlatency = (inlatency + outlatency) * SAMPLE_HZ / 1000000;
 
     int count = 0;
     while(1) {
-        int current_head = count*FRAMESIZE;
 
-        /* Read some data into the buffer */
-        if (pa_simple_read(ins, inbuf, FRAMESIZE, &error) < 0) {
+        /* Read some data ... */
+        if (pa_simple_read(ins, buf, FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
             goto finish;
         }
 
-        /* add into loop_record at the record head */
         if(isRecording()) {
+            //copy into loop, accounting for latency
             for(i=0; i<FRAMESIZE; i++){
-                long addr = (current_head + i - latency) % LOOPLENN;
+                long addr = (count)*FRAMESIZE + i;
                 if(addr<0) {
                     addr = LOOPLENN + (addr % LOOPLENN);
+                }else if (addr>LOOPLENN) {
+                    addr = addr % LOOPLENN;
                 }
+                /*
+                if (i == 0){
+                    printf("rewriting %d - ", addr);
+                } if (i == FRAMESIZE-1) {
+                    printf("%d, (count = %d)\n",addr, count);
+                }
+                */
 
-                loop[addr] = loop[addr] + inbuf[i];
+                //printf("%d, %d\n",addr, BUFLEN);
+                loop[addr] = loop[addr] + buf[i];
             }
         }
 
-        /* play the appropriate part of loop_play */
-        if (pa_simple_write(outs, loop + current_head, (size_t) FRAMESIZE, &error) < 0) {
+        if(oldrecording != isRecording()){
+            if(!oldrecording){
+                printf("\nrecording\n");
+            } else{
+                printf("\nrecording stopped\n");
+            }
+            oldrecording = !oldrecording;
+        }
+
+        /* ... and play it */
+        if (pa_simple_write(outs, loopbuf + (count * FRAMESIZE), (size_t) FRAMESIZE, &error) < 0) {
             fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
             goto finish;
         }
-
-        /* increment count for next loop */
         count = (count + 1) % looplen;
         if(count == 0){
             printf("."); fflush(stdout);
+            memcpy(loopbuf, loop, LOOPLENN);
         }
     }
 
