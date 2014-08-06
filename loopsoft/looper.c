@@ -58,11 +58,14 @@ struct recordingloop{
     short resetpoint;
     //recording
     short recording;
+    //muted?
+    short muted;
 };
 
 
 int recordingPressed = 0;
 int resetPressed = 0;
+int mutePressed = 0;
 
 void doInput(struct recordingloop subloops[], int currenttime){
     int k;
@@ -85,14 +88,27 @@ void doInput(struct recordingloop subloops[], int currenttime){
 
                 case 'Q':
                 case 'q':
-                    resetPressed = resetPressed ^ 1;
+                    mutePressed = mutePressed ^ 1;
                     break;
                 case 'W':
                 case 'w':
-                    resetPressed = resetPressed ^ 2;
+                    mutePressed = mutePressed ^ 2;
                     break;
                 case 'E':
                 case 'e':
+                    mutePressed = mutePressed ^ 4;
+                    break;
+
+                case 'A':
+                case 'a':
+                    resetPressed = resetPressed ^ 1;
+                    break;
+                case 'S':
+                case 's':
+                    resetPressed = resetPressed ^ 2;
+                    break;
+                case 'D':
+                case 'd':
                     resetPressed = resetPressed ^ 4;
                     break;
             }
@@ -109,6 +125,11 @@ void doInput(struct recordingloop subloops[], int currenttime){
             }
 
             if (SDL_JoystickGetButton(joy, k+NUM_LOOPS)){
+                mutePressed = mutePressed ^ (1<<k);
+                changed = 1;
+            }
+
+            if (SDL_JoystickGetButton(joy, k+NUM_LOOPS*2)){
                 resetPressed = resetPressed ^ (1<<k);
                 changed = 1;
             }
@@ -120,8 +141,8 @@ void doInput(struct recordingloop subloops[], int currenttime){
     for(k=0; k<NUM_LOOPS; k++){
         ///printf("(%d, %d) ", k, NUM_LOOPS);
         subloops[k].recording = (recordingPressed>>k) & 1;
+        subloops[k].muted = (mutePressed>>k) & 1;
         if ( (resetPressed>>k) & 1){
-
             subloops[k].resetpoint = currenttime;
         }
     }
@@ -136,10 +157,13 @@ void doInput(struct recordingloop subloops[], int currenttime){
             (resetPressed>>1) & 1,
             (resetPressed>>2) & 1);
         */
-        printf("\n(%d %d %d) (%d %d %d) ",
+        printf("\nrec(%d %d %d) mut(%d %d %d) rst(%d, %d, %d)",
             subloops[0].recording,
             subloops[1].recording,
             subloops[2].recording,
+            subloops[0].muted,
+            subloops[1].muted,
+            subloops[2].muted,
             subloops[0].resetpoint,
             subloops[1].resetpoint,
             subloops[2].resetpoint);
@@ -366,7 +390,7 @@ int main(int argc, char*argv[]) {
             int sum = 0;
             for (x=0; x<NUM_LOOPS; x++){
                 //if not reset, copy into masterloop.
-                if (subloops[x].resetpoint == -1){
+                if (subloops[x].resetpoint == -1 && !subloops[x].muted){
                     sum = sum + subloops[x].body[i];
                 }
             }
