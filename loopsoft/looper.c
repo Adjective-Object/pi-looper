@@ -83,12 +83,15 @@ void doInput(struct recordingloop subloops[], int currenttime){
                     recordingPressed = recordingPressed ^ 4; //0100
                     break;
 
+                case 'Q':
                 case 'q':
                     resetPressed = resetPressed ^ 1;
                     break;
+                case 'W':
                 case 'w':
                     resetPressed = resetPressed ^ 2;
                     break;
+                case 'E':
                 case 'e':
                     resetPressed = resetPressed ^ 4;
                     break;
