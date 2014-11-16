@@ -1,6 +1,7 @@
+all: looper test wiring
 
 looper: looper.c
-	gcc -Wall -g -o looper looper.c -lm -lao -lpulse-simple -lpulse -lSDL
+	gcc -Wall -g -o looper looper.c -lm -lao -lpulse-simple -lpulse -lwiringPi
 
 
 test: test.c

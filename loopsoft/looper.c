@@ -14,6 +14,18 @@
 #include <termios.h>
 #include <SDL/SDL.h>
 #include <time.h>
+#include <wiringPi.h>
+
+#define 
+
+#define INPUT_MODE INPUT_MODE_GPIO 0
+
+#ifndef INPUT_MODE
+#define INPUT_MODE INPUT_MODE_GPIO
+#endif 
+
+
+// bufers
 #define FRAMESIZE 32
 #define MAXNUMFRAMES 30000
 #define BUFLEN FRAMESIZE * MAXNUMFRAMES
@@ -21,19 +33,16 @@
 #define SAMPLE_HZ 44100
 #define NUM_LOOPS 3
 
-int getkey() {
-    int character;
+// GPIO stuff
+#define RECORDING_0 15  // head 8
+#define RESET_0 16      // head 10
+#define RECORDING_1 8   // head 3
+#define RESET_1 9       // head 5
+#define RECORDING_2 18  // head 12
+#define RESET_2 7       // head 7
 
-    /* read a character from the stdin stream without blocking */
-    /*   returns EOF (-1) if no character is available */
-    character = fgetc(stdin);
-
-    return character;
-}
-
-int keyrecording = 0;
-int oldrecording = 0;
-SDL_Joystick *joy = NULL;
+#define ACTIVE_POSITION 0
+#define PASSIVE_POSITION 1
 
 
 struct recordingloop{
@@ -48,111 +57,29 @@ struct recordingloop{
     short muted;
 };
 
+int recording_pins[NUM_LOOPS];
+int reset_pins[NUM_LOOPS];
 
-int recordingPressed = 0;
-int resetPressed = 0;
-int mutePressed = 0;
+int getkey() {
+    int character;
+
+    /* read a character from the stdin stream without blocking */
+    /*   returns EOF (-1) if no character is available */
+    character = fgetc(stdin);
+
+    return character;
+}
 
 void doInput(struct recordingloop subloops[], int currenttime){
-    int k;
-    int changed = 0;
-    resetPressed = 0;
-
-    if(joy == NULL){
-        while((k = getkey()) != -1){
-            //update this when update num channels
-            switch(k) {
-                case '1':
-                    recordingPressed = recordingPressed ^ 1; //0001
-                    break;
-                case '2':
-                    recordingPressed = recordingPressed ^ 2; //0010
-                    break;
-                case '3':
-                    recordingPressed = recordingPressed ^ 4; //0100
-                    break;
-
-                case 'Q':
-                case 'q':
-                    mutePressed = mutePressed ^ 1;
-                    break;
-                case 'W':
-                case 'w':
-                    mutePressed = mutePressed ^ 2;
-                    break;
-                case 'E':
-                case 'e':
-                    mutePressed = mutePressed ^ 4;
-                    break;
-
-                case 'A':
-                case 'a':
-                    resetPressed = resetPressed ^ 1;
-                    break;
-                case 'S':
-                case 's':
-                    resetPressed = resetPressed ^ 2;
-                    break;
-                case 'D':
-                case 'd':
-                    resetPressed = resetPressed ^ 4;
-                    break;
-            }
-            changed = 1;
+    int i;
+    for (i=0; i<NUM_LOOPS; i++){
+        int rst = digitalRead(reset_pins[i]);
+        subloops[i].recording = 
+            (PASSIVE_POSITION == rst) &&
+            (ACTIVE_POSITION  == digitalRead(recording_pins[i]));
+        if (ACTIVE_POSITION == rst) {
+            subloops[i].resetpoint = currenttime;
         }
-    }
-    else{
-        recordingPressed = 0;
-        SDL_JoystickUpdate(); //TODO test this shit
-        for (k=0; k<NUM_LOOPS; k++){
-            if (SDL_JoystickGetButton(joy, k)){
-                recordingPressed = recordingPressed ^ (1<<k);
-                changed = 1;
-            }
-
-            if (SDL_JoystickGetButton(joy, k+NUM_LOOPS)){
-                mutePressed = mutePressed ^ (1<<k);
-                changed = 1;
-            }
-
-            if (SDL_JoystickGetButton(joy, k+NUM_LOOPS*2)){
-                resetPressed = resetPressed ^ (1<<k);
-                changed = 1;
-            }
-        }
-    }
-
-    //printf("%d, %d\n", recordingPressed, resetPressed);
-
-    for(k=0; k<NUM_LOOPS; k++){
-        ///printf("(%d, %d) ", k, NUM_LOOPS);
-        subloops[k].recording = (recordingPressed>>k) & 1;
-        subloops[k].muted = (mutePressed>>k) & 1;
-        if ( (resetPressed>>k) & 1){
-            subloops[k].resetpoint = currenttime;
-        }
-    }
-
-    if(changed){
-        /*
-        printf("\n(%d %d %d) (%d %d %d)\n",
-            recordingPressed & 1,
-            (recordingPressed>>1) & 1,
-            (recordingPressed>>2) & 1,
-            resetPressed & 1,
-            (resetPressed>>1) & 1,
-            (resetPressed>>2) & 1);
-        */
-        printf("\nrec(%d %d %d) mut(%d %d %d) rst(%d, %d, %d)",
-            subloops[0].recording,
-            subloops[1].recording,
-            subloops[2].recording,
-            subloops[0].muted,
-            subloops[1].muted,
-            subloops[2].muted,
-            subloops[0].resetpoint,
-            subloops[1].resetpoint,
-            subloops[2].resetpoint);
     }
 }
 
@@ -239,10 +166,13 @@ int main(int argc, char*argv[]) {
     new_term_attr.c_cc[VMIN] = 0;
     tcsetattr(fileno(stdin), TCSANOW, &new_term_attr);
 
-    //iterator variables
+    // iterator variables
     int i;
     int x;
 
+    // initialize input arrays 
+    recording_pins = {RECORDING_0, RECORDING_1, RECORDING_2};
+    reset_pins = {RESET_0, RESET_1, RESET_2};
 
     /* The Sample format to use */
     static const pa_sample_spec ss = {
